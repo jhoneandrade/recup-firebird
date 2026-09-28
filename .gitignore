@@ -1,3 +1,13 @@
+# Binarios compilados e utilitarios locais
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+RecupBD.exe
+gbak.exe
+gfix.exe
+
 # Arquivos de banco de dados e backups (Firebird)
 *.IB
 *.ib
@@ -23,8 +33,7 @@ Corretor*.bat
 !build.bat
 
 # Backups e copias temporarias locais
-* - Copia*.exe
-* - Copia*.cs
+* - Copia*
 *.bak
 *.tmp
 

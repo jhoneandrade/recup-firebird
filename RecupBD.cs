@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 using System.Collections.Generic;
 
@@ -2634,6 +2634,18 @@ namespace FirebirdRecupBD
 
             {
 
+                @"C:\Program Files (x86)\Firebird\Firebird_4_0\bin",
+
+                @"C:\Program Files\Firebird\Firebird_4_0\bin",
+
+                @"C:\Program Files (x86)\Firebird\Firebird_5_0\bin",
+
+                @"C:\Program Files\Firebird\Firebird_5_0\bin",
+
+                @"C:\Program Files (x86)\Firebird\Firebird_3_0\bin",
+
+                @"C:\Program Files\Firebird\Firebird_3_0\bin",
+
                 @"C:\Program Files (x86)\Firebird\Firebird_2_5\bin",
 
                 @"C:\Program Files\Firebird\Firebird_2_5\bin",
@@ -2641,10 +2653,6 @@ namespace FirebirdRecupBD
                 @"C:\Program Files (x86)\Firebird\Firebird_2_1\bin",
 
                 @"C:\Program Files\Firebird\Firebird_2_1\bin",
-
-                @"C:\Program Files (x86)\Firebird\Firebird_3_0\bin",
-
-                @"C:\Program Files\Firebird\Firebird_3_0\bin",
 
                 @"C:\Program Files (x86)\Firebird\Firebird_2_0\bin",
 
