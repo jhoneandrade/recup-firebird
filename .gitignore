@@ -1,0 +1,38 @@
+# Arquivos de banco de dados e backups (Firebird)
+*.IB
+*.ib
+*.FDB
+*.fdb
+*.GDB
+*.gdb
+*.FBK
+*.fbk
+
+# Arquivos de configuracao local e credenciais (salvos pelo usuario)
+recupbd.cfg
+*.cfg
+.test_write
+
+# Logs de execucao e erros
+*.log
+erro_recup.log
+
+# Scripts legados contendo credenciais
+Corretor*.bat
+*.bat
+!build.bat
+
+# Backups e copias temporarias locais
+* - Copia*.exe
+* - Copia*.cs
+*.bak
+*.tmp
+
+# Arquivos de IDE e Sistema
+.vs/
+.vscode/
+bin/
+obj/
+*.user
+Thumbs.db
+Desktop.ini
