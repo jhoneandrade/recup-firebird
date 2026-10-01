@@ -36,6 +36,8 @@ Corretor*.bat
 * - Copia*
 *.bak
 *.tmp
+*.rar
+*.zip
 
 # Arquivos de IDE e Sistema
 .vs/

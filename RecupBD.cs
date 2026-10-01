@@ -52,11 +52,11 @@ using Microsoft.Win32;
 
 [assembly: Guid("e58df2f4-a02e-4b47-b892-911b3d680c2f")]
 
-[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.2.1.0")]
 
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.1.0")]
 
-[assembly: AssemblyInformationalVersion("1.2.0")]
+[assembly: AssemblyInformationalVersion("1.2.1")]
 
 namespace FirebirdRecupBD
 
@@ -2472,11 +2472,13 @@ namespace FirebirdRecupBD
 
             string confirmDetails =
 
-                "• O serviço do Firebird será parado temporariamente.\n" +
+                "• Os serviços e conexões ativas serão pausados temporariamente para liberação do banco.\n" +
 
                 "• O banco original será preservado com data e hora na pasta de origem.\n" +
 
-                "• O diagnóstico e reparo serão executados na cópia de trabalho.\n\n" +
+                "• O diagnóstico e reparo serão executados na cópia de trabalho.\n" +
+
+                "• Todos os serviços ativos serão restaurados automaticamente ao final.\n\n" +
 
                 "Deseja continuar?";
 
@@ -2722,156 +2724,281 @@ namespace FirebirdRecupBD
 
         }
 
-        private void StopFirebirdService()
+        // =========================================================================
+        // GERENCIAMENTO INTELIGENTE DE SERVICOS E PROCESSOS
+        // =========================================================================
 
+        private readonly List<string> _servicesToRestore = new List<string>();
+
+        private static readonly string[] KNOWN_CLIENT_SERVICES = new string[]
         {
+            "GansoPainel",
+            "GansoServerService",
+            "SocketServer",
+            "GansoDFSService",
+            "GansoIntegracaoService",
+            "GansoAgent"
+        };
 
-            AppendLog("  [SERVIÇO] Parando serviço do Firebird para liberação do banco...", Color.FromArgb(245, 158, 11), false, LogCategory.Step);
+        private static readonly string[] KNOWN_CLIENT_PROCESSES = new string[]
+        {
+            "Ganso",
+            "GansoPainel",
+            "GansoServer",
+            "GansoServerSC",
+            "scktsrvr",
+            "GansoDFS",
+            "GansoIntegracao",
+            "GansoAgent",
+            "fb_inet_server"
+        };
 
+        private void PrepareAndStopAllServices()
+        {
+            _servicesToRestore.Clear();
+
+            // 1. Snapshot dos servicos que REALMENTE estao instalados e rodando nesta maquina
             try
-
             {
-
-                ProcessStartInfo psi = new ProcessStartInfo("net", "stop FirebirdServerDefaultInstance")
-
+                ServiceController[] allServices = ServiceController.GetServices();
+                foreach (ServiceController svc in allServices)
                 {
-
-                    UseShellExecute = false,
-
-                    CreateNoWindow = true,
-
-                    RedirectStandardOutput = true,
-
-                    RedirectStandardError = true
-
-                };
-
-                using (Process p = Process.Start(psi))
-
-                {
-
-                    p.WaitForExit(10000);
-
-                    if (p.ExitCode == 0)
-
+                    try
                     {
+                        bool isFirebird = svc.ServiceName.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                          svc.DisplayName.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) >= 0;
+                        bool isEcosystem = false;
+                        foreach (string k in KNOWN_CLIENT_SERVICES)
+                        {
+                            if (string.Equals(svc.ServiceName, k, StringComparison.OrdinalIgnoreCase))
+                            {
+                                isEcosystem = true;
+                                break;
+                            }
+                        }
 
-                        AppendLog("  ✔ Serviço Firebird parado com sucesso.", Color.FromArgb(34, 197, 94), false, LogCategory.Step);
-
-                        return;
-
+                        if ((isFirebird || isEcosystem) && (svc.Status == ServiceControllerStatus.Running || svc.Status == ServiceControllerStatus.StartPending))
+                        {
+                            if (!_servicesToRestore.Contains(svc.ServiceName))
+                            {
+                                _servicesToRestore.Add(svc.ServiceName);
+                            }
+                        }
                     }
-
+                    catch { }
                 }
-
-                ProcessStartInfo psiElevated = new ProcessStartInfo("net", "stop FirebirdServerDefaultInstance")
-
-                {
-
-                    UseShellExecute = true,
-
-                    Verb = "runas",
-
-                    WindowStyle = ProcessWindowStyle.Hidden
-
-                };
-
-                using (Process p = Process.Start(psiElevated))
-
-                {
-
-                    p.WaitForExit(15000);
-
-                    AppendLog("  ✔ Serviço Firebird parado com privilégios administrativos.", Color.FromArgb(34, 197, 94), false, LogCategory.Step);
-
-                }
-
             }
-
             catch (Exception ex)
-
             {
-
-                AppendLog("  [AVISO] Tentativa de parar serviço: " + ex.Message, Color.FromArgb(245, 158, 11), false, LogCategory.Warning);
-
+                AppendLog("  [AVISO] Não foi possível mapear serviços via API: " + ex.Message, Color.FromArgb(245, 158, 11), false, LogCategory.Warning);
             }
 
+            if (_servicesToRestore.Count > 0)
+            {
+                AppendLog("  [SNAPSHOT] Serviços ativos detectados nesta máquina: " + string.Join(", ", _servicesToRestore.ToArray()), Color.FromArgb(148, 163, 184), false, LogCategory.Step);
+            }
+            else
+            {
+                AppendLog("  [SNAPSHOT] Nenhum serviço cliente em execução detectado previamente.", Color.FromArgb(148, 163, 184), false, LogCategory.Step);
+            }
+
+            // 2. Parar servicos clientes primeiro (para fechar conexoes com o banco antes do Firebird)
+            foreach (string svc in _servicesToRestore)
+            {
+                if (svc.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    StopSingleService(svc);
+                }
+            }
+
+            // 3. Encerrar processos de aplicacao conectados (ERP, painel, servicos em modo console)
+            KillClientProcesses();
+
+            // 4. Parar servicos Firebird
+            bool stoppedAnyFb = false;
+            foreach (string svc in _servicesToRestore)
+            {
+                if (svc.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    StopSingleService(svc);
+                    stoppedAnyFb = true;
+                }
+            }
+
+            if (!stoppedAnyFb)
+            {
+                StopSingleService("FirebirdServerDefaultInstance");
+                StopSingleService("FirebirdGuardianDefaultInstance");
+            }
+
+            // 5. Encerrar qualquer worker fb_inet_server preso
+            KillProcessByName("fb_inet_server");
+
+            Thread.Sleep(500);
         }
 
-        private void StartFirebirdService()
-
+        private void StopSingleService(string serviceName)
         {
-
-            AppendLog("  [SERVIÇO] Reiniciando serviço do Firebird...", Color.FromArgb(148, 163, 184), false, LogCategory.Step);
-
             try
-
             {
-
-                ProcessStartInfo psi = new ProcessStartInfo("net", "start FirebirdServerDefaultInstance")
-
+                using (ServiceController sc = new ServiceController(serviceName))
                 {
-
-                    UseShellExecute = false,
-
-                    CreateNoWindow = true,
-
-                    RedirectStandardOutput = true,
-
-                    RedirectStandardError = true
-
-                };
-
-                using (Process p = Process.Start(psi))
-
-                {
-
-                    p.WaitForExit(10000);
-
-                    if (p.ExitCode == 0)
-
+                    if (sc.Status == ServiceControllerStatus.Running || sc.Status == ServiceControllerStatus.StartPending)
                     {
-
-                        AppendLog("  ✔ Serviço Firebird ativo e respondendo.", Color.FromArgb(34, 197, 94), false, LogCategory.Step);
-
+                        AppendLog(string.Format("  [SERVIÇO] Parando serviço: {0} ({1})...", sc.DisplayName, sc.ServiceName), Color.FromArgb(245, 158, 11), false, LogCategory.Step);
+                        sc.Stop();
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(8));
+                        AppendLog(string.Format("  ✔ Serviço '{0}' parado com sucesso.", sc.DisplayName), Color.FromArgb(34, 197, 94), false, LogCategory.Step);
                         return;
-
                     }
-
                 }
-
-                ProcessStartInfo psiElevated = new ProcessStartInfo("net", "start FirebirdServerDefaultInstance")
-
-                {
-
-                    UseShellExecute = true,
-
-                    Verb = "runas",
-
-                    WindowStyle = ProcessWindowStyle.Hidden
-
-                };
-
-                using (Process p = Process.Start(psiElevated))
-
-                {
-
-                    p.WaitForExit(15000);
-
-                    AppendLog("  ✔ Serviço Firebird ativo com privilégios administrativos.", Color.FromArgb(34, 197, 94), false, LogCategory.Step);
-
-                }
-
             }
-
-            catch (Exception ex)
-
+            catch
             {
+                // Fallback via net stop
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo("net", string.Format("stop \"{0}\"", serviceName))
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (Process p = Process.Start(psi))
+                    {
+                        p.WaitForExit(8000);
+                    }
+                }
+                catch { }
+            }
+        }
 
-                AppendLog("  [AVISO] Tentativa de iniciar serviço: " + ex.Message, Color.FromArgb(245, 158, 11), false, LogCategory.Warning);
+        private void StartSingleService(string serviceName)
+        {
+            try
+            {
+                using (ServiceController sc = new ServiceController(serviceName))
+                {
+                    if (sc.Status == ServiceControllerStatus.Stopped || sc.Status == ServiceControllerStatus.StopPending)
+                    {
+                        AppendLog(string.Format("  [SERVIÇO] Reiniciando serviço: {0}...", sc.DisplayName), Color.FromArgb(148, 163, 184), false, LogCategory.Step);
+                        sc.Start();
+                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
+                        AppendLog(string.Format("  ✔ Serviço '{0}' ativo e em execução.", sc.DisplayName), Color.FromArgb(34, 197, 94), false, LogCategory.Step);
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback via net start
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo("net", string.Format("start \"{0}\"", serviceName))
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (Process p = Process.Start(psi))
+                    {
+                        p.WaitForExit(10000);
+                    }
+                }
+                catch { }
+            }
+        }
 
+        private void StopFirebirdOnly()
+        {
+            bool stopped = false;
+            foreach (string svc in _servicesToRestore)
+            {
+                if (svc.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    StopSingleService(svc);
+                    stopped = true;
+                }
+            }
+            if (!stopped)
+            {
+                StopSingleService("FirebirdServerDefaultInstance");
+            }
+            KillProcessByName("fb_inet_server");
+            Thread.Sleep(400);
+        }
+
+        private void StartFirebirdOnly()
+        {
+            bool started = false;
+            foreach (string svc in _servicesToRestore)
+            {
+                if (svc.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    StartSingleService(svc);
+                    started = true;
+                }
+            }
+            if (!started)
+            {
+                StartSingleService("FirebirdServerDefaultInstance");
+            }
+            Thread.Sleep(800);
+        }
+
+        private void RestoreSavedServices()
+        {
+            AppendLog("\n[SERVIÇOS] Restaurando serviços ao estado operacional original...", Color.FromArgb(148, 163, 184), false, LogCategory.Step);
+
+            // 1. Inicia o Firebird primeiro
+            StartFirebirdOnly();
+
+            // 2. Inicia apenas os servicos clientes que realmente estavam rodando nesta maquina antes
+            int restoredCount = 0;
+            foreach (string svc in _servicesToRestore)
+            {
+                if (svc.IndexOf("firebird", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    StartSingleService(svc);
+                    restoredCount++;
+                }
             }
 
+            if (restoredCount > 0)
+            {
+                AppendLog(string.Format("  ✔ {0} serviço(s) cliente restaurado(s) com sucesso.", restoredCount), Color.FromArgb(34, 197, 94), false, LogCategory.Step);
+            }
+
+            _servicesToRestore.Clear();
+        }
+
+        private void KillClientProcesses()
+        {
+            foreach (string procName in KNOWN_CLIENT_PROCESSES)
+            {
+                KillProcessByName(procName);
+            }
+        }
+
+        private void KillProcessByName(string processName)
+        {
+            try
+            {
+                Process[] procs = Process.GetProcessesByName(processName);
+                foreach (Process p in procs)
+                {
+                    try
+                    {
+                        AppendLog(string.Format("  [PROCESSO] Finalizando processo conectado: {0} (PID {1})...", p.ProcessName, p.Id), Color.FromArgb(245, 158, 11), false, LogCategory.Step);
+                        p.Kill();
+                        p.WaitForExit(3000);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         private void CleanWorkFiles(string workDb, string workFbk, string workOk)
@@ -2942,13 +3069,13 @@ namespace FirebirdRecupBD
 
                 AppendLog("--------------------------------------------------------------------------------", Color.FromArgb(71, 85, 105), false, LogCategory.Normal);
 
-                // ETAPA 1: PARAR O SERVICO PARA LIBERACAO TOTAL DO ARQUIVO
+                // ETAPA 1: PARAR O SERVICO E PROCESSOS PARA LIBERACAO TOTAL DO ARQUIVO
 
-                UpdateStep("Passo 1/7: Parando serviço Firebird para liberação do banco...");
+                UpdateStep("Passo 1/7: Parando serviços e liberando conexões do banco...");
 
-                AppendStepLog("[ETAPA 1/7] Parando serviço do Firebird...");
+                AppendStepLog("[ETAPA 1/7] Mapeando serviços ativos e liberando conexões do banco...");
 
-                StopFirebirdService();
+                PrepareAndStopAllServices();
 
                 SetTargetProgress(5);
 
@@ -2962,28 +3089,41 @@ namespace FirebirdRecupBD
 
                 AppendStepLog("[ETAPA 2/7] Renomeando original para: " + Path.GetFileName(backupDbPath));
 
-                try
-
+                bool renameSuccess = false;
+                string renameError = "";
+                for (int attempt = 1; attempt <= 3; attempt++)
                 {
-
-                    if (File.Exists(backupDbPath)) File.Delete(backupDbPath);
-
-                    File.Move(originalDbPath, backupDbPath);
-
-                    AppendLog("  ✔ Banco original renomeado com sucesso e mantido seguro na origem.", Color.FromArgb(34, 197, 94), true, LogCategory.Step);
-
+                    try
+                    {
+                        if (File.Exists(backupDbPath)) File.Delete(backupDbPath);
+                        File.Move(originalDbPath, backupDbPath);
+                        renameSuccess = true;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        renameError = ex.Message;
+                        if (attempt < 3)
+                        {
+                            AppendLog(string.Format("  [AVISO] Tentativa {0}/3 de renomear falhou ({1}). Forçando liberação de processos residuais...", attempt, renameError), Color.FromArgb(245, 158, 11), false, LogCategory.Warning);
+                            KillClientProcesses();
+                            KillProcessByName("fb_inet_server");
+                            Thread.Sleep(1000);
+                        }
+                    }
                 }
 
-                catch (Exception ex)
-
+                if (!renameSuccess)
                 {
-
-                    AppendLog("  [FALHA] Não foi possível renomear o arquivo original: " + ex.Message, Color.FromArgb(239, 68, 68), true, LogCategory.Error);
-
-                    StartFirebirdService();
-
+                    AppendLog("  [FALHA] Não foi possível renomear o arquivo original: " + renameError, Color.FromArgb(239, 68, 68), true, LogCategory.Error);
+                    UpdateStep("⚠️ Interrompido por segurança: banco em uso por outro processo.");
+                    SetTargetProgress(0);
+                    RestoreSavedServices();
                     return;
-
+                }
+                else
+                {
+                    AppendLog("  ✔ Banco original renomeado com sucesso e mantido seguro na origem.", Color.FromArgb(34, 197, 94), true, LogCategory.Step);
                 }
 
                 SetTargetProgress(10);
@@ -3024,9 +3164,9 @@ namespace FirebirdRecupBD
 
                 UpdateStep("Passo 4/7: Reiniciando serviço Firebird para gfix/gbak...");
 
-                AppendStepLog("[ETAPA 4/7] Reiniciando serviço Firebird...");
+                AppendStepLog("[ETAPA 4/7] Reiniciando serviço Firebird para ferramentas gfix e gbak...");
 
-                StartFirebirdService();
+                StartFirebirdOnly();
 
                 SetTargetProgress(28);
 
@@ -3166,7 +3306,7 @@ namespace FirebirdRecupBD
 
                 AppendStepLog("Colocando o banco corrigido no caminho original...");
 
-                StopFirebirdService();
+                StopFirebirdOnly();
 
                 try
 
@@ -3194,9 +3334,9 @@ namespace FirebirdRecupBD
 
                 AppendLog("  ✔ Arquivos temporários removidos com sucesso. Apenas o backup e o corrigido foram mantidos.", Color.FromArgb(148, 163, 184), false, LogCategory.Step);
 
-                // REINICIAR SERVICO
+                // RESTAURAR TODOS OS SERVICOS ATIVOS
 
-                StartFirebirdService();
+                RestoreSavedServices();
 
                 SetTargetProgress(100);
 
@@ -3278,7 +3418,7 @@ namespace FirebirdRecupBD
 
                 CleanWorkFiles(workDb, workFbk, workOk);
 
-                StartFirebirdService();
+                RestoreSavedServices();
 
             }
 
@@ -3944,7 +4084,7 @@ namespace FirebirdRecupBD
 
             {
 
-                Text = "Versão: v1.2.0    •    Build: 28/09/2026",
+                Text = "Versão: v1.2.1    •    Build: 30/09/2026",
 
                 Font = new Font("Segoe UI", 8.75f, FontStyle.Bold),
 

@@ -12,7 +12,7 @@
   <a href="https://microsoft.com/windows"><img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Platform" /></a>
   <a href="https://dotnet.microsoft.com/"><img src="https://img.shields.io/badge/.NET_Framework-4.0%2B-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" alt=".NET" /></a>
   <a href="https://firebirdsql.org/"><img src="https://img.shields.io/badge/Firebird-2.0%20%7C%202.1%20%7C%202.5%20%7C%203.0%20%7C%204.0-FF4500?style=for-the-badge&logo=firebird&logoColor=white" alt="Firebird" /></a>
-  <a href="https://github.com/jhoneandrade/recup-firebird/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.0-16A34A?style=for-the-badge" alt="Release" /></a>
+  <a href="https://github.com/jhoneandrade/recup-firebird/releases/latest"><img src="https://img.shields.io/badge/Release-v1.2.1-16A34A?style=for-the-badge" alt="Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Licen%C3%A7a-MIT-blue.svg?style=for-the-badge" alt="License" /></a>
 </p>
 

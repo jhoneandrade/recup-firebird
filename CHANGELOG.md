@@ -7,6 +7,19 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ---
 
+## [1.2.1] - 2026-09-30
+
+### Adicionado
+- **Snapshot e Gerenciamento Inteligente de Serviços**:
+  - Detecção dinâmica via Windows Service Controller dos serviços em execução antes de iniciar a recuperação.
+  - Parada coordenada dos serviços e aplicações clientes que consom o banco antes de parar o serviço do Firebird.
+  - Finalização de processos zumbis (`fb_inet_server.exe` e processos do ERP) para garantir liberação imediata dos handles do arquivo `.IB` / `.FDB`.
+  - Mecanismo de re-tentativa na renomeação (3 tentativas com espera e limpeza de handles) para evitar falhas por travamentos transitórios do sistema operacional.
+  - **Restauração Seletiva**: Ao concluir ou em caso de rollback, o sistema reinicia exclusivamente os serviços que estavam originalmente ativos naquela máquina específica, sem tentar iniciar serviços inexistentes ou desativados.
+- **Feedback Visual Aprimorado**: Atualização imediata do rótulo de status em caso de falha de renomeação (`⚠️ Interrompido por segurança: banco em uso por outro processo.`) e diálogo de confirmação detalhado.
+
+---
+
 ## [1.2.0] - 2026-09-28
 
 ### Adicionado
